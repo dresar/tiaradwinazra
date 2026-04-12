@@ -57,6 +57,13 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        status: {
+          aman: "hsl(var(--status-aman))",
+          waspada: "hsl(var(--status-waspada))",
+          bahaya: "hsl(var(--status-bahaya))",
+          kering: "hsl(var(--status-kering))",
+          "sangat-kering": "hsl(var(--status-sangat-kering))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
