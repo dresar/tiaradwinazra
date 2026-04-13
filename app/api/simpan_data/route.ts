@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const { adc, kadar_air, suhu, kelembaban, status } = body;
+    console.log("[simpan_data] Incoming payload:", body);
 
     // Validate required fields
     if (
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
       kelembaban === undefined ||
       !status
     ) {
+      console.warn("[simpan_data] Validation failed: Missing fields");
       return NextResponse.json(
         { error: "Missing required fields: adc, kadar_air, suhu, kelembaban, status" },
         { status: 400, headers: corsHeaders }
@@ -43,8 +45,10 @@ export async function POST(req: NextRequest) {
     );
 
     const inserted = result.rows[0];
+    console.log(`[simpan_data] Data berhasil disimpan. ID: ${inserted.id}`);
 
     return NextResponse.json(
+
       {
         success: true,
         message: "Data berhasil disimpan",

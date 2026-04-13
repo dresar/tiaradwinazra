@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/get_data — Fetch latest 50 monitoring records
 export async function GET() {
   try {
@@ -12,6 +14,8 @@ export async function GET() {
     );
 
     const rows = result.rows;
+    console.log(`[get_data] Berhasil mengambil ${rows.length} data.`);
+
 
     // Latest is the first row (highest ID), history is chronological order
     const history = [...rows].reverse();

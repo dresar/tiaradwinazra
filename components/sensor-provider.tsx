@@ -37,10 +37,12 @@ export function SensorProvider({
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/get_data");
+      const res = await fetch("/api/get_data", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json: SensorResponse = await res.json();
+      console.log("[SensorProvider] Data received:", json);
       setData(json);
+
       setLastUpdate(new Date());
       setIsOnline(true);
     } catch {
