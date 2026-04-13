@@ -470,23 +470,35 @@ export default function DocumentationPage() {
       </Card>
 
       {/* ============================================= */}
-      {/* KODE ESP32 FULL FIRMWARE */}
+      {/* KODE ESP32 ULTIMATE INTEGRATION */}
       {/* ============================================= */}
-      <Card className="shadow-sm border-primary/20">
-        <CardHeader className="flex flex-row items-center gap-3 bg-primary/5">
-          <Code2 className="h-5 w-5 text-primary" />
-          <div className="flex-1">
-            <CardTitle className="text-base font-bold">
-              Full Firmware ESP32 — IoT Corn Quality System
-            </CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">
-              File ini sudah lengkap dengan fitur WiFi, HTTP Client untuk Vercel, dan Algoritma Sortir.
-            </p>
+      <Card className="shadow-lg border-2 border-primary/30 overflow-hidden">
+        <div className="bg-primary text-primary-foreground px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Cpu className="h-6 w-6" />
+            <div>
+              <h2 className="text-lg font-bold">Ultimate Firmware ESP32</h2>
+              <p className="text-xs opacity-90">Integrated WiFi + HTTP + Hardware Logic (Sortir Jagung)</p>
+            </div>
           </div>
-        </CardHeader>
+          <Badge variant="secondary" className="bg-white/20 text-white border-none animate-pulse">
+            Ready to deploy
+          </Badge>
+        </div>
+
         <CardContent className="p-0">
+          <div className="bg-slate-900 p-4 border-b border-slate-800 flex items-center justify-between">
+            <div className="flex gap-2">
+              <div className="w-3 h-3 rounded-full bg-red-500" />
+              <div className="w-3 h-3 rounded-full bg-amber-500" />
+              <div className="w-3 h-3 rounded-full bg-emerald-500" />
+            </div>
+            <div className="text-[10px] text-slate-400 font-mono tracking-widest uppercase">tiara_iot_v1.ino</div>
+            <div className="w-10" />
+          </div>
+
           <div className="relative group">
-            <div className="absolute right-4 top-4 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute right-6 top-6 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
               <CopyButton
                 text={`#include <WiFi.h>
 #include <HTTPClient.h>
@@ -495,173 +507,244 @@ export default function DocumentationPage() {
 #include "DHT.h"
 #include <ESP32Servo.h>
 
-// ================= WIFI CONFIG =================
-const char* ssid     = "NAMA_WIFI_ANDA";     // GANTI DENGAN SSID WIFI
-const char* password = "PASSWORD_WIFI";      // GANTI DENGAN PASSWORD WIFI
+/**
+ * ========================================================
+ * KOMPONEN & PINOUT:
+ * 1. ESP32 DevKit V1
+ * 2. LCD I2C (Alamat 0x27) -> SDA: 21, SCL: 22
+ * 3. Sensor Kapasitif -> Output Analog: Pin 32
+ * 4. DHT22 -> Data: Pin 27
+ * 5. Servo SG90 -> PWM: Pin 26
+ * ========================================================
+ */
+
+// ================= WIFI & API CONFIG =================
+const char* ssid     = "NAMA_WIFI_ANDA";     // Ganti dengan SSID WiFi
+const char* password = "PASSWORD_WIFI";      // Ganti dengan Password WiFi
 const char* serverUrl = "${baseUrl}/api/simpan_data"; 
 
-// ================= PIN & HARDWARE =================
+// ================= PIN & HARDWARE CONFIG =================
 #define DHTPIN 27
 #define DHTTYPE DHT22
 const int soilPin = 32;  // Sensor Kapasitif ADC
 const int servoPin = 26; // Motor Servo SG90
 
-// ================= OBJECT =================
+// ================= INITIALIZE OBJECTS =================
 DHT dht(DHTPIN, DHTTYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 Servo myServo;
 
-// ================= KALIBRASI REGRESI LINEAR =================
+// ================= PREDIKSI KADAR AIR (REGRESI LINEAR) =================
+// Rumus: y = ax + b (y = Kadar Air, x = ADC)
 float a = -0.0157;
 float b = 45.4;
 
-// ================= SERVO POSISI =================
-const int tengah = 90;
-const int kanan  = 180; // Full Kanan (Untuk BASAH)
-const int kiri   = 0;   // Full Kiri (Untuk KERING)
+// ================= POSISI SERVO =================
+const int posisi_tengah = 90;
+const int posisi_kanan  = 180; // Jalur BASAH
+const int posisi_kiri   = 0;   // Jalur KERING
 
-// ================= STATE MACHINE =================
-enum SystemState { IDLE, SORTING, DONE };
+// ================= STATE & TIMING =================
+enum SystemState { IDLE, SORTING, LOCKOUT };
 SystemState currentState = IDLE;
 unsigned long servoStartTime = 0;
-const unsigned long servoDelay = 10000; 
+const unsigned long servoDelay = 10000; // Tahan servo 10 detik setelah sortir
+unsigned long lastMeasure = 0;
+const unsigned long measureInterval = 3000; // Baca sensor tiap 3 detik
 
-// ================= TIMER =================
-unsigned long lastSend = 0;
-const unsigned long sendInterval = 3000; 
-
-// ================= FUNGSI BACA ADC =================
+// -------------------------------------------------------------------------
+// FUNGSI: BACA ADC STABIL
+// -------------------------------------------------------------------------
 int readADCstable(int pin) {
-  long total = 0;
-  for (int i = 0; i < 10; i++) {
-    total += analogRead(pin);
+  long sum = 0;
+  for (int i = 0; i < 15; i++) {
+    sum += analogRead(pin);
     delay(5);
   }
-  return total / 10;
+  return sum / 15;
 }
 
-// ================= FUNGSI BACA DHT22 =================
-bool readDHT(float &suhu, float &hum) {
-  suhu = dht.readTemperature();
-  hum  = dht.readHumidity();
-  return (!isnan(suhu) && !isnan(hum));
-}
-
-// ================= FUNGSI KONVERSI KADAR =================
-float hitungKadar(int adc) {
-  return constrain((a * adc) + b, 0, 100);
-}
-
-// ================= FUNGSI STATUS JAGUNG =================
-String statusJagung(float kadar) {
-  if (kadar < 5.0) return "KOSONG"; 
+// -------------------------------------------------------------------------
+// FUNGSI: LOGIKA STATUS JAGUNG
+// -------------------------------------------------------------------------
+String tentukanStatus(float kadar) {
+  if (kadar < 5.0) return "KOSONG";
   if (kadar >= 5.0 && kadar < 10.0) return "KERING";
   if (kadar >= 10.0 && kadar <= 14.0) return "AMAN";
-  return "BASAH"; 
+  return "BASAH";
 }
 
-// ================= FUNGSI KONEKSI WIFI =================
+// -------------------------------------------------------------------------
+// FUNGSI: KONEKSI WIFI
+// -------------------------------------------------------------------------
 void connectWiFi() {
-  Serial.print("Connecting to WiFi...");
-  WiFi.begin(ssid, password);
+  Serial.print("\\nConnecting to WiFi...");
   lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("WiFi Connecting");
+  lcd.setCursor(0, 0); lcd.print("Connecting...");
   
+  WiFi.begin(ssid, password);
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(500); Serial.print("."); attempts++;
+    lcd.setCursor(0, 1); lcd.print("Attempts: " + String(attempts));
   }
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\\nWiFi Connected!");
-    lcd.setCursor(0, 1);
-    lcd.print(WiFi.localIP());
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("WiFi: OK!");
+    lcd.setCursor(0, 1); lcd.print(WiFi.localIP());
     delay(2000);
   } else {
-    Serial.println("\\nWiFi Failed! Running Offline.");
-    lcd.setCursor(0, 1);
-    lcd.print("Offline Mode");
-    delay(2000);
+    Serial.println("\\nWiFi Failed! Starting Offline Mode.");
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("WiFi ERROR");
+    lcd.setCursor(0, 1); lcd.print("Offline Mode");
+    delay(3000);
   }
 }
 
-// ================= FUNGSI KIRIM DATA =================
-void kirimData(int adc, float kadar, float suhu, float hum, String status) {
+// -------------------------------------------------------------------------
+// FUNGSI: KIRIM DATA KE VERCEL
+// -------------------------------------------------------------------------
+void kirimDataWeb(int adc, float kadar, float suhu, float hum, String currentStatus) {
   if (WiFi.status() != WL_CONNECTED) return;
-  
+
   HTTPClient http;
   http.begin(serverUrl);
   http.addHeader("Content-Type", "application/json");
-  
-  String json = "{\\"adc\\":" + String(adc) 
-    + ",\\"kadar_air\\":" + String(kadar, 1) 
-    + ",\\"suhu\\":" + String(suhu, 1)
-    + ",\\"kelembaban\\":" + String(hum, 1) 
-    + ",\\"status\\":\\"" + status + "\\"}";
-    
-  Serial.print("Sending to Vercel: "); Serial.println(json);
-  int httpCode = http.POST(json);
-  if (httpCode == 201) Serial.println("✅ Data Saved");
-  else Serial.println("❌ Error: " + String(httpCode));
+
+  // Create JSON Data
+  String payload = "{\\"adc\\":" + String(adc) 
+                 + ",\\"kadar_air\\":" + String(kadar, 1) 
+                 + ",\\"suhu\\":" + String(suhu, 1)
+                 + ",\\"kelembaban\\":" + String(hum, 1) 
+                 + ",\\"status\\":\\"" + currentStatus + "\\"}";
+
+  Serial.print("--- SENDING DATA ---");
+  Serial.println(payload);
+
+  int httpCode = http.POST(payload);
+  if (httpCode > 0) {
+    if (httpCode == 201) Serial.println(">>> Web Data SAVED ✅");
+    else Serial.println(">>> HTTP Response: " + String(httpCode));
+  } else {
+    Serial.println(">>> Connection Error: " + http.errorToString(httpCode));
+  }
   http.end();
 }
 
+// -------------------------------------------------------------------------
+// SETUP
+// -------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
+  Serial.println("\\n=== INITIALIZING SYSTEM ===");
+
+  // Display Init
   lcd.init(); lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("Initializing...");
+  lcd.setCursor(0, 0); lcd.print("SYSTEM INIT...");
+  
+  // Sensor Init
   dht.begin();
   analogReadResolution(12);
+
+  // Connection
   connectWiFi();
+
+  // Servo Initial Position
   myServo.setPeriodHertz(50);
   myServo.attach(servoPin);
-  myServo.write(tengah);
-  delay(1000); myServo.detach();
-  lcd.clear(); lcd.setCursor(0, 0); lcd.print("SISTEM READY");
+  myServo.write(posisi_tengah);
+  delay(1000);
+  myServo.detach(); // Detach to prevent jitter
+
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("SYSTEM READY");
   delay(2000);
 }
 
+// -------------------------------------------------------------------------
+// LOOP UTAMA
+// -------------------------------------------------------------------------
 void loop() {
-  if (millis() - lastSend >= sendInterval) {
-    lastSend = millis();
-    int adc = readADCstable(soilPin);
-    float suhu = 0, hum = 0; readDHT(suhu, hum);
-    float kadar = hitungKadar(adc);
-    String status = statusJagung(kadar);
+  
+  // 1. PEMBACAAN DATA (TIAP 3 DETIK)
+  if (millis() - lastMeasure >= measureInterval) {
+    lastMeasure = millis();
 
-    Serial.println("-------------------------");
-    Serial.print("ADC: "); Serial.println(adc);
-    Serial.print("Kadar: "); Serial.print(kadar); Serial.println(" %");
-    Serial.print("Status: "); Serial.println(status);
+    int analogVal = readADCstable(soilPin);
+    float t = dht.readTemperature();
+    float h = dht.readHumidity();
     
-    kirimData(adc, kadar, suhu, hum, status);
+    // Hitung Kadar Air
+    float kadarAir = constrain((a * analogVal) + b, 0, 100);
+    String status = tentukanStatus(kadarAir);
 
+    // Kirim ke Cloud Vercel
+    kirimDataWeb(analogVal, kadarAir, t, h, status);
+
+    // Monitoring Serial
+    Serial.println("===============================");
+    Serial.print("ADC: "); Serial.println(analogVal);
+    Serial.print("Kadar: "); Serial.print(kadarAir, 1); Serial.println("%");
+    Serial.print("Status: "); Serial.println(status);
+    Serial.println("===============================");
+
+    // Monitoring LCD
     lcd.clear();
-    lcd.setCursor(0,0); lcd.print("K:"); lcd.print(kadar, 1); lcd.print("% "); lcd.print(status);
-    lcd.setCursor(0,1); lcd.print("T:"); lcd.print(suhu, 1); lcd.print("C H:"); lcd.print(hum, 0);
+    lcd.setCursor(0, 0);
+    lcd.print("K:" + String(kadarAir, 1) + "% " + status);
+    
+    lcd.setCursor(0, 1);
+    lcd.print("T:" + String(t, 1) + "C H:" + String(h, 0) + "%");
 
-    if (status == "KOSONG" && currentState == DONE) currentState = IDLE;
+    // 2. LOGIKA SORTIR OTOMATIS
+    
+    // Aktifkan kembali sistem jika wadah sudah kosong
+    if (status == "KOSONG" && currentState == LOCKOUT) {
+      currentState = IDLE;
+      Serial.println("[INFO] Wadah Kosong. Menunggu Jagung Baru...");
+    }
 
+    // Eksekusi Sortir (Hanya jika Status bukan KOSONG dan sedang IDLE)
     if (status != "KOSONG" && currentState == IDLE) {
+      Serial.println("[ACTION] Jagung Terdeteksi! Memulai Sortir...");
+      
       myServo.attach(servoPin);
-      if (status == "BASAH") myServo.write(kanan);
-      else if (status == "KERING") myServo.write(kiri);
-      else if (status == "AMAN") myServo.write(tengah);
-      currentState = SORTING; servoStartTime = millis();  
+      
+      if (status == "BASAH") {
+        Serial.println("[SERVO] Move to KANAN (180)");
+        myServo.write(posisi_kanan);
+      } 
+      else if (status == "KERING") {
+        Serial.println("[SERVO] Move to KIRI (0)");
+        myServo.write(posisi_kiri);
+      }
+      else {
+        Serial.println("[SERVO] Keep TENGAH (90)");
+        myServo.write(posisi_tengah);
+      }
+      
+      currentState = SORTING;
+      servoStartTime = millis();
     }
   }
 
+  // 3. AUTO CLOSE / LOCKOUT
+  // Setelah melewati waktu sortir, kembalikan servo ke posisi netral
   if (currentState == SORTING && (millis() - servoStartTime >= servoDelay)) {
-    myServo.write(tengah); delay(800); myServo.detach();
-    currentState = DONE;
+    Serial.println("[ACTION] Sortir Selesai. Menutup Pintu (Tengah).");
+    myServo.write(posisi_tengah);
+    delay(800);
+    myServo.detach();
+    currentState = LOCKOUT;
   }
 }`}
               />
             </div>
-            <pre className="text-[11px] bg-slate-950 text-slate-300 p-6 overflow-x-auto font-mono leading-relaxed max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
+
+            <pre className="text-[11px] bg-slate-950 text-slate-300 p-8 overflow-x-auto font-mono leading-relaxed max-h-[700px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700">
 {`#include <WiFi.h>
 #include <HTTPClient.h>
 #include <Wire.h>
@@ -669,187 +752,322 @@ void loop() {
 #include "DHT.h"
 #include <ESP32Servo.h>
 
-// ================= WIFI CONFIG =================
-const char* ssid     = "NAMA_WIFI_ANDA";     // GANTI DENGAN SSID WIFI
-const char* password = "PASSWORD_WIFI";      // GANTI DENGAN PASSWORD WIFI
+/**
+ * ========================================================
+ * KOMPONEN & PINOUT:
+ * 1. ESP32 DevKit V1
+ * 2. LCD I2C (Alamat 0x27) -> SDA: 21, SCL: 22
+ * 3. Sensor Kapasitif -> Output Analog: Pin 32
+ * 4. DHT22 -> Data: Pin 27
+ * 5. Servo SG90 -> PWM: Pin 26
+ * ========================================================
+ */
+
+// ================= WIFI & API CONFIG =================
+const char* ssid     = "NAMA_WIFI_ANDA";     // Ganti dengan SSID WiFi
+const char* password = "PASSWORD_WIFI";      // Ganti dengan Password WiFi
 const char* serverUrl = "${baseUrl}/api/simpan_data"; 
 
-// ================= PIN & HARDWARE =================
+// ================= PIN & HARDWARE CONFIG =================
 #define DHTPIN 27
 #define DHTTYPE DHT22
 const int soilPin = 32;  // Sensor Kapasitif ADC
 const int servoPin = 26; // Motor Servo SG90
 
-// ================= OBJECT =================
+// ================= INITIALIZE OBJECTS =================
 DHT dht(DHTPIN, DHTTYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 Servo myServo;
 
-// ================= KALIBRASI REGRESI LINEAR =================
+// ================= PREDIKSI KADAR AIR (REGRESI LINEAR) =================
+// Rumus: y = ax + b (y = Kadar Air, x = ADC)
 float a = -0.0157;
 float b = 45.4;
 
-// ================= SERVO POSISI =================
-const int tengah = 90;
-const int kanan  = 180; // Full Kanan (Untuk BASAH)
-const int kiri   = 0;   // Full Kiri (Untuk KERING)
+// ================= POSISI SERVO =================
+const int posisi_tengah = 90;
+const int posisi_kanan  = 180; // Jalur BASAH
+const int posisi_kiri   = 0;   // Jalur KERING
 
-// ================= STATE MACHINE =================
-enum SystemState { IDLE, SORTING, DONE };
+// ================= STATE & TIMING =================
+enum SystemState { IDLE, SORTING, LOCKOUT };
 SystemState currentState = IDLE;
 unsigned long servoStartTime = 0;
-const unsigned long servoDelay = 10000; 
+const unsigned long servoDelay = 10000; // Tahan servo 10 detik setelah sortir
+unsigned long lastMeasure = 0;
+const unsigned long measureInterval = 3000; // Baca sensor tiap 3 detik
 
-// ================= TIMER =================
-unsigned long lastSend = 0;
-const unsigned long sendInterval = 3000; 
-
-// ================= FUNGSI BACA ADC =================
+// -------------------------------------------------------------------------
+// FUNGSI: BACA ADC STABIL
+// -------------------------------------------------------------------------
 int readADCstable(int pin) {
-  long total = 0;
-  for (int i = 0; i < 10; i++) {
-    total += analogRead(pin);
+  long sum = 0;
+  for (int i = 0; i < 15; i++) {
+    sum += analogRead(pin);
     delay(5);
   }
-  return total / 10;
+  return sum / 15;
 }
 
-// ================= FUNGSI BACA DHT22 =================
-bool readDHT(float &suhu, float &hum) {
-  suhu = dht.readTemperature();
-  hum  = dht.readHumidity();
-  return (!isnan(suhu) && !isnan(hum));
-}
-
-// ================= FUNGSI KONVERSI KADAR =================
-float hitungKadar(int adc) {
-  return constrain((a * adc) + b, 0, 100);
-}
-
-// ================= FUNGSI STATUS JAGUNG =================
-String statusJagung(float kadar) {
-  if (kadar < 5.0) return "KOSONG"; 
+// -------------------------------------------------------------------------
+// FUNGSI: LOGIKA STATUS JAGUNG
+// -------------------------------------------------------------------------
+String tentukanStatus(float kadar) {
+  if (kadar < 5.0) return "KOSONG";
   if (kadar >= 5.0 && kadar < 10.0) return "KERING";
   if (kadar >= 10.0 && kadar <= 14.0) return "AMAN";
-  return "BASAH"; 
+  return "BASAH";
 }
 
-// ================= FUNGSI KONEKSI WIFI =================
+// -------------------------------------------------------------------------
+// FUNGSI: KONEKSI WIFI
+// -------------------------------------------------------------------------
 void connectWiFi() {
-  Serial.print("Connecting to WiFi...");
-  WiFi.begin(ssid, password);
+  Serial.print("\\nConnecting to WiFi...");
   lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("WiFi Connecting");
+  lcd.setCursor(0, 0); lcd.print("Connecting...");
   
+  WiFi.begin(ssid, password);
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(500); Serial.print("."); attempts++;
+    lcd.setCursor(0, 1); lcd.print("Attempts: " + String(attempts));
   }
-  
+
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("\\nWiFi Connected!");
-    lcd.setCursor(0, 1);
-    lcd.print(WiFi.localIP());
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("WiFi: OK!");
+    lcd.setCursor(0, 1); lcd.print(WiFi.localIP());
     delay(2000);
   } else {
-    Serial.println("\\nWiFi Failed! Running Offline.");
-    lcd.setCursor(0, 1);
-    lcd.print("Offline Mode");
-    delay(2000);
+    Serial.println("\\nWiFi Failed! Starting Offline Mode.");
+    lcd.clear();
+    lcd.setCursor(0, 0); lcd.print("WiFi ERROR");
+    lcd.setCursor(0, 1); lcd.print("Offline Mode");
+    delay(3000);
   }
 }
 
-// ================= FUNGSI KIRIM DATA =================
-void kirimData(int adc, float kadar, float suhu, float hum, String status) {
+// -------------------------------------------------------------------------
+// FUNGSI: KIRIM DATA KE VERCEL
+// -------------------------------------------------------------------------
+void kirimDataWeb(int adc, float kadar, float suhu, float hum, String currentStatus) {
   if (WiFi.status() != WL_CONNECTED) return;
-  
+
   HTTPClient http;
   http.begin(serverUrl);
   http.addHeader("Content-Type", "application/json");
-  
-  String json = "{\\"adc\\":" + String(adc) 
-    + ",\\"kadar_air\\":" + String(kadar, 1) 
-    + ",\\"suhu\\":" + String(suhu, 1)
-    + ",\\"kelembaban\\":" + String(hum, 1) 
-    + ",\\"status\\":\\"" + status + "\\"}";
-    
-  Serial.print("Sending to Vercel: "); Serial.println(json);
-  int httpCode = http.POST(json);
-  if (httpCode == 201) Serial.println("✅ Data Saved");
-  else Serial.println("❌ Error: " + String(httpCode));
+
+  // Create JSON Data
+  String payload = "{\\"adc\\":" + String(adc) 
+                 + ",\\"kadar_air\\":" + String(kadar, 1) 
+                 + ",\\"suhu\\":" + String(suhu, 1)
+                 + ",\\"kelembaban\\":" + String(hum, 1) 
+                 + ",\\"status\\":\\"" + currentStatus + "\\"}";
+
+  Serial.print("--- SENDING DATA ---");
+  Serial.println(payload);
+
+  int httpCode = http.POST(payload);
+  if (httpCode > 0) {
+    if (httpCode == 201) Serial.println(">>> Web Data SAVED ✅");
+    else Serial.println(">>> HTTP Response: " + String(httpCode));
+  } else {
+    Serial.println(">>> Connection Error: " + http.errorToString(httpCode));
+  }
   http.end();
 }
 
+// -------------------------------------------------------------------------
+// SETUP
+// -------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
+  Serial.println("\\n=== INITIALIZING SYSTEM ===");
+
+  // Display Init
   lcd.init(); lcd.backlight();
-  lcd.setCursor(0, 0); lcd.print("Initializing...");
+  lcd.setCursor(0, 0); lcd.print("SYSTEM INIT...");
+  
+  // Sensor Init
   dht.begin();
   analogReadResolution(12);
+
+  // Connection
   connectWiFi();
+
+  // Servo Initial Position
   myServo.setPeriodHertz(50);
   myServo.attach(servoPin);
-  myServo.write(tengah);
-  delay(1000); myServo.detach();
-  lcd.clear(); lcd.setCursor(0, 0); lcd.print("SISTEM READY");
+  myServo.write(posisi_tengah);
+  delay(1000);
+  myServo.detach(); // Detach to prevent jitter
+
+  lcd.clear();
+  lcd.setCursor(0, 0); lcd.print("SYSTEM READY");
   delay(2000);
 }
 
+// -------------------------------------------------------------------------
+// LOOP UTAMA
+// -------------------------------------------------------------------------
 void loop() {
-  if (millis() - lastSend >= sendInterval) {
-    lastSend = millis();
-    int adc = readADCstable(soilPin);
-    float suhu = 0, hum = 0; readDHT(suhu, hum);
-    float kadar = hitungKadar(adc);
-    String status = statusJagung(kadar);
+  
+  // 1. PEMBACAAN DATA (TIAP 3 DETIK)
+  if (millis() - lastMeasure >= measureInterval) {
+    lastMeasure = millis();
 
-    Serial.println("-------------------------");
-    Serial.print("ADC: "); Serial.println(adc);
-    Serial.print("Kadar: "); Serial.print(kadar); Serial.println(" %");
-    Serial.print("Status: "); Serial.println(status);
+    int analogVal = readADCstable(soilPin);
+    float t = dht.readTemperature();
+    float h = dht.readHumidity();
     
-    kirimData(adc, kadar, suhu, hum, status);
+    // Hitung Kadar Air
+    float kadarAir = constrain((a * analogVal) + b, 0, 100);
+    String status = tentukanStatus(kadarAir);
 
+    // Kirim ke Cloud Vercel
+    kirimDataWeb(analogVal, kadarAir, t, h, status);
+
+    // Monitoring Serial
+    Serial.println("===============================");
+    Serial.print("ADC: "); Serial.println(analogVal);
+    Serial.print("Kadar: "); Serial.print(kadarAir, 1); Serial.println("%");
+    Serial.print("Status: "); Serial.println(status);
+    Serial.println("===============================");
+
+    // Monitoring LCD
     lcd.clear();
-    lcd.setCursor(0,0); lcd.print("K:"); lcd.print(kadar, 1); lcd.print("% "); lcd.print(status);
-    lcd.setCursor(0,1); lcd.print("T:"); lcd.print(suhu, 1); lcd.print("C H:"); lcd.print(hum, 0);
+    lcd.setCursor(0, 0);
+    lcd.print("K:" + String(kadarAir, 1) + "% " + status);
+    
+    lcd.setCursor(0, 1);
+    lcd.print("T:" + String(t, 1) + "C H:" + String(h, 0) + "%");
 
-    if (status == "KOSONG" && currentState == DONE) currentState = IDLE;
+    // 2. LOGIKA SORTIR OTOMATIS
+    
+    // Aktifkan kembali sistem jika wadah sudah kosong
+    if (status == "KOSONG" && currentState == LOCKOUT) {
+      currentState = IDLE;
+      Serial.println("[INFO] Wadah Kosong. Menunggu Jagung Baru...");
+    }
 
+    // Eksekusi Sortir (Hanya jika Status bukan KOSONG dan sedang IDLE)
     if (status != "KOSONG" && currentState == IDLE) {
+      Serial.println("[ACTION] Jagung Terdeteksi! Memulai Sortir...");
+      
       myServo.attach(servoPin);
-      if (status == "BASAH") myServo.write(kanan);
-      else if (status == "KERING") myServo.write(kiri);
-      else if (status == "AMAN") myServo.write(tengah);
-      currentState = SORTING; servoStartTime = millis();  
+      
+      if (status == "BASAH") {
+        Serial.println("[SERVO] Move to KANAN (180)");
+        myServo.write(posisi_kanan);
+      } 
+      else if (status == "KERING") {
+        Serial.println("[SERVO] Move to KIRI (0)");
+        myServo.write(posisi_kiri);
+      }
+      else {
+        Serial.println("[SERVO] Keep TENGAH (90)");
+        myServo.write(posisi_tengah);
+      }
+      
+      currentState = SORTING;
+      servoStartTime = millis();
     }
   }
 
+  // 3. AUTO CLOSE / LOCKOUT
+  // Setelah melewati waktu sortir, kembalikan servo ke posisi netral
   if (currentState == SORTING && (millis() - servoStartTime >= servoDelay)) {
-    myServo.write(tengah); delay(800); myServo.detach();
-    currentState = DONE;
+    Serial.println("[ACTION] Sortir Selesai. Menutup Pintu (Tengah).");
+    myServo.write(posisi_tengah);
+    delay(800);
+    myServo.detach();
+    currentState = LOCKOUT;
   }
 }`}
             </pre>
           </div>
 
-          <div className="p-4 bg-amber-50 border-t border-amber-100 flex gap-3 text-sm text-amber-800">
-            <AlertTriangle className="h-5 w-5 shrink-0" />
-            <div className="space-y-1">
-              <p className="font-bold">Langkah Penting:</p>
-              <ol className="list-decimal pl-4 space-y-1 text-xs">
-                <li>Instal library <strong>DHT sensor library by Adafruit</strong> via Library Manager.</li>
-                <li>Instal library <strong>ESP32Servo</strong> dan <strong>LiquidCrystal I2C</strong>.</li>
-                <li>Gunakan <strong>SSID & Password</strong> WiFi yang benar.</li>
-                <li>Pastikan <strong>serverUrl</strong> mengarah ke domain Vercel Anda.</li>
-              </ol>
+          <div className="bg-slate-50 border-t p-6">
+            <h3 className="text-sm font-bold flex items-center gap-2 mb-3">
+              <BookOpen className="h-4 w-4 text-primary" />
+              Panduan Instalasi Firmware
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</div>
+                  <div className="text-[12px] leading-relaxed">
+                    <p className="font-bold">Persiapkan Arduino IDE</p>
+                    <p className="text-muted-foreground">Pastikan Board ESP32 sudah terinstal di Board Manager.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</div>
+                  <div className="text-[12px] leading-relaxed">
+                    <p className="font-bold">Instal Library Wajib</p>
+                    <ul className="list-disc pl-4 text-muted-foreground">
+                      <li>DHT sensor library (Adafruit)</li>
+                      <li>ESP32Servo</li>
+                      <li>LiquidCrystal I2C</li>
+                      <li>Adafruit Unified Sensor</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</div>
+                  <div className="text-[12px] leading-relaxed">
+                    <p className="font-bold">Konfigurasi WiFi</p>
+                    <p className="text-muted-foreground">Isi <code className="bg-muted px-1 rounded">ssid</code> dan <code className="bg-muted px-1 rounded">password</code> sesuai koneksi hotspot/router Anda.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="bg-primary/10 text-primary w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0">4</div>
+                  <div className="text-[12px] leading-relaxed">
+                    <p className="font-bold">Upload & Monitor</p>
+                    <p className="text-muted-foreground">Klik Upload dan buka Serial Monitor (Baudrate 115200) untuk memantau status pengiriman data.</p>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* ============================================= */}
+      {/* SKEMA WIRING (BARU) */}
+      {/* ============================================= */}
+      <Card className="shadow-sm">
+        <CardHeader className="flex flex-row items-center gap-3">
+          <Cpu className="h-5 w-5 text-primary" />
+          <CardTitle className="text-base">Skema Wiring (Pinout Resmi)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="border rounded-lg p-4 space-y-2">
+              <p className="font-bold text-sm border-b pb-1">Power System</p>
+              <ul className="text-xs space-y-1 text-muted-foreground">
+                <li className="flex justify-between"><span>VCC ESP32</span> <span className="font-mono text-primary">Micro USB / 5V</span></li>
+                <li className="flex justify-between"><span>Sensor Soil VCC</span> <span className="font-mono text-primary">3.3V (ADC Safe)</span></li>
+                <li className="flex justify-between"><span>Servo SG90 VCC</span> <span className="font-mono text-red-500 font-bold">5V (External Recommended)</span></li>
+              </ul>
+            </div>
+            <div className="border rounded-lg p-4 space-y-2">
+              <p className="font-bold text-sm border-b pb-1">Data/Signal Pins</p>
+              <ul className="text-xs space-y-1 text-muted-foreground">
+                <li className="flex justify-between"><span>Soil Moisture</span> <span className="font-mono text-primary">Pin 32 (Analog)</span></li>
+                <li className="flex justify-between"><span>DHT22 Data</span> <span className="font-mono text-primary">Pin 27 (Digital)</span></li>
+                <li className="flex justify-between"><span>Servo PWM</span> <span className="font-mono text-primary">Pin 26 (PWM)</span></li>
+                <li className="flex justify-between"><span>LCD SDA / SCL</span> <span className="font-mono text-primary">Pin 21 / 22 (I2C)</span></li>
+              </ul>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
 
 
       {/* ============================================= */}
